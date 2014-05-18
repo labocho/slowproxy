@@ -1,5 +1,7 @@
 require "slowproxy/version"
 
 module Slowproxy
-  # Your code goes here...
+  require "slowproxy/cli"
+  require "slowproxy/server"
+  require "slowproxy/slow_buffered_io"
 end

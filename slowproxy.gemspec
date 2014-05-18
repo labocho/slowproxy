@@ -8,8 +8,8 @@ Gem::Specification.new do |spec|
   spec.version       = Slowproxy::VERSION
   spec.authors       = ["labocho"]
   spec.email         = ["labocho@penguinlab.jp"]
-  spec.summary       = %q{TODO: Write a short summary. Required.}
-  spec.description   = %q{TODO: Write a longer description. Optional.}
+  spec.summary       = %q{HTTP proxy server that communicates origin server slowly to emulate slow client.}
+  spec.description   = %q{HTTP proxy server that communicates origin server slowly to emulate slow client.}
   spec.homepage      = ""
   spec.license       = "MIT"
 

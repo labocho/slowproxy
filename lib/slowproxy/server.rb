@@ -56,5 +56,97 @@ module Slowproxy
       set_via(res)
       res.body = response.body
     end
+
+    def wait_for_connect
+      @wait ||= 1 / ((SlowBufferedIO.bps / 8.0) / 1024)
+    end
+
+    def do_CONNECT(req, res)
+      # Proxy Authentication
+      proxy_auth(req, res)
+
+      ua = Thread.current[:WEBrickSocket]  # User-Agent
+      raise WEBrick::HTTPStatus::InternalServerError,
+        "[BUG] cannot get socket" unless ua
+
+      host, port = req.unparsed_uri.split(":", 2)
+      # Proxy authentication for upstream proxy server
+      if proxy = proxy_uri(req, res)
+        proxy_request_line = "CONNECT #{host}:#{port} HTTP/1.0"
+        if proxy.userinfo
+          credentials = "Basic " + [proxy.userinfo].pack("m").delete("\n")
+        end
+        host, port = proxy.host, proxy.port
+      end
+
+      begin
+        @logger.debug("CONNECT: upstream proxy is `#{host}:#{port}'.")
+        os = TCPSocket.new(host, port)     # origin server
+
+        if proxy
+          @logger.debug("CONNECT: sending a Request-Line")
+          os << proxy_request_line << CRLF
+          @logger.debug("CONNECT: > #{proxy_request_line}")
+          if credentials
+            @logger.debug("CONNECT: sending a credentials")
+            os << "Proxy-Authorization: " << credentials << CRLF
+          end
+          os << CRLF
+          proxy_status_line = os.gets(LF)
+          @logger.debug("CONNECT: read a Status-Line form the upstream server")
+          @logger.debug("CONNECT: < #{proxy_status_line}")
+          if %r{^HTTP/\d+\.\d+\s+200\s*} =~ proxy_status_line
+            while line = os.gets(LF)
+              break if /\A(#{CRLF}|#{LF})\z/om =~ line
+            end
+          else
+            raise WEBrick::HTTPStatus::BadGateway
+          end
+        end
+        @logger.debug("CONNECT #{host}:#{port}: succeeded")
+        res.status = WEBrick::HTTPStatus::RC_OK
+      rescue => ex
+        @logger.debug("CONNECT #{host}:#{port}: failed `#{ex.message}'")
+        res.set_error(ex)
+        raise WEBrick::HTTPStatus::EOFError
+      ensure
+        if handler = @config[:ProxyContentHandler]
+          handler.call(req, res)
+        end
+        res.send_response(ua)
+        access_log(@config, req, res)
+
+        # Should clear request-line not to send the response twice.
+        # see: HTTPServer#run
+        req.parse(NullReader) rescue nil
+      end
+
+      begin
+        while fds = IO::select([ua, os])
+          if fds[0].member?(ua)
+            buf = ua.sysread(1024);
+            @logger.debug("CONNECT: #{buf.bytesize} byte from User-Agent")
+            # Write slowly
+            @logger.debug "wait for write (#{wait_for_connect}s)"
+            sleep wait_for_connect
+            # /Write slowly
+            os.syswrite(buf)
+          elsif fds[0].member?(os)
+            # Read slowly
+            @logger.debug "wait for read (#{wait_for_connect}s)"
+            sleep wait_for_connect
+            # /Read slowly
+            buf = os.sysread(1024);
+            @logger.debug("CONNECT: #{buf.bytesize} byte from #{host}:#{port}")
+            ua.syswrite(buf)
+          end
+        end
+      rescue => ex
+        os.close
+        @logger.debug("CONNECT #{host}:#{port}: closed")
+      end
+
+      raise WEBrick::HTTPStatus::EOFError
+    end
   end
 end
